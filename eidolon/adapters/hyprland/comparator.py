@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import List, Optional
-from eidolon.models import Finding
+from eidolon.models import Finding, Label, Severity
 from .models import HyprlandConfig
 
 @dataclass

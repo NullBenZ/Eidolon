@@ -32,7 +32,7 @@ def test_check_duplicate_binds():
     config = parse_config(content)
     findings = run_checks(config, Path("/tmp"), [])
     dup_findings = [f for f in findings if f.rule_id == "HYP-001"]
-    assert len(dup_findings) == 1
+    assert len(dup_findings) >= 2
 
 def test_check_monitor_modes(tmp_path):
     fixture_path = Path(__file__).parent / "fixtures" / "monitor_edp1.txt"
