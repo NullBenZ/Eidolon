@@ -7,12 +7,16 @@ from eidolon.adapters.hyprland.comparator import ConfigChange
 
 console = Console()
 
-def render_effect_view(changes: List[ConfigChange]):
+def render_effect_view(changes: List[ConfigChange], overall_summary: str = None):
     if not changes:
         console.print("[green]No semantic changes detected.[/green]")
         return
         
     console.print("\n[bold cyan]=== EFFECT VIEW ===[/bold cyan]\n")
+    
+    if overall_summary and len(changes) >= 2:
+        console.print(Panel(f"[italic]{overall_summary}[/italic]", title="AI Summary", border_style="magenta", padding=(0, 2)))
+        console.print()
     
     for change in changes:
         table = Table(show_header=False, box=None, padding=(0, 2))
@@ -55,7 +59,10 @@ def render_effect_view(changes: List[ConfigChange]):
             
         # AI Meaning
         if change.meaning:
-            table.add_row("MEANING", f"[italic]{change.meaning}[/italic]")
+            table.add_row("MEANING", f"[magenta]Predicted effect (AI):[/magenta] {change.meaning}")
+        # AI Fix
+        if getattr(change, "fix", None):
+            table.add_row("FIX", f"[magenta]AI Suggestion:[/magenta] {change.fix}")
             
         panel = Panel(table, border_style="cyan", padding=(1, 2))
         console.print(panel)

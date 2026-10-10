@@ -142,7 +142,42 @@ def test_handle_undo(tmp_path):
     
     assert test_file.read_text() == "previous state"
     
-    # Check if a new backup of "current state" was created
-    backups = sorted(tmp_path.glob("test.txt.*.bak"))
-    assert len(backups) == 2
-    assert backups[-1].read_text() == "current state"
+    # Check if a .pre-undo of "current state" was created
+    pre_undos = sorted(tmp_path.glob("test.txt.*.pre-undo"))
+    assert len(pre_undos) == 1
+    assert pre_undos[0].read_text() == "current state"
+    
+    # Check if the backup was marked as .restored
+    restored = sorted(tmp_path.glob("test.txt.*.restored"))
+    assert len(restored) == 1
+    assert restored[0].read_text() == "previous state"
+    
+    # The original .bak should be gone
+    baks = sorted(tmp_path.glob("test.txt.*.bak"))
+    assert len(baks) == 0
+
+def test_handle_undo_multiple(tmp_path):
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("state 3")
+    
+    b1 = tmp_path / "test.txt.1.bak"
+    b1.write_text("state 1")
+    
+    b2 = tmp_path / "test.txt.2.bak"
+    b2.write_text("state 2")
+    
+    # First undo restores state 2
+    handle_undo(str(test_file))
+    assert test_file.read_text() == "state 2"
+    assert not b2.exists()
+    assert b2.with_suffix(".restored").exists()
+    
+    # Second undo restores state 1
+    handle_undo(str(test_file))
+    assert test_file.read_text() == "state 1"
+    assert not b1.exists()
+    assert b1.with_suffix(".restored").exists()
+    
+    # Third undo fails
+    with pytest.raises(SystemExit):
+        handle_undo(str(test_file))

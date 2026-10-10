@@ -11,6 +11,7 @@ class ConfigChange:
     after_state: Optional[str]
     findings: List[Finding]
     meaning: Optional[str] = None
+    fix: Optional[str] = None
 
 def _find_finding_for_line(findings: List[Finding], line_num: int) -> List[Finding]:
     res = []

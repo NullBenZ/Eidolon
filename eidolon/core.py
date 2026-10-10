@@ -29,6 +29,10 @@ def backup_file(path: Path) -> Path:
         return None
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = path.with_name(f"{path.name}.{timestamp}.bak")
+    counter = 1
+    while backup_path.exists():
+        backup_path = path.with_name(f"{path.name}.{timestamp}_{counter}.bak")
+        counter += 1
     shutil.copy2(path, backup_path)
     return backup_path
 
@@ -59,7 +63,7 @@ def run_editor(path: Path):
     subprocess.run(["nano", str(path)])
 
 
-def handle_edit(target_path: str, show_diff: bool = False, debug: bool = False):
+def handle_edit(target_path: str, show_diff: bool = False, debug: bool = False, no_ai: bool = False):
     path = Path(target_path)
     if not path.exists():
         console.print(f"[red]Error: File {path} does not exist.[/red]")
@@ -121,9 +125,72 @@ def handle_edit(target_path: str, show_diff: bool = False, debug: bool = False):
                 new_findings = run_checks(new_config, path.parent, monitors_info)
                 changes = compare_configs(old_config, new_config, new_findings)
                 
-                render_effect_view(changes)
+                # --- AI Explanation ---
+                ai_err = None
+                overall_summary = None
+                if not no_ai and changes:
+                    from eidolon.ai import GemmaProvider, changes_to_ai_items, _is_contradiction
+                    provider = GemmaProvider()
+                    if not provider.is_configured:
+                        ai_err = "API key not configured"
+                    else:
+                        items = changes_to_ai_items(changes)
+                        
+                        import time
+                        start_time = time.time()
+                        reply = None
+                        
+                        try:
+                            with console.status("[dim]Asking Gemma... (Ctrl+C to skip)[/dim]"):
+                                reply, ai_err = provider.explain(items)
+                                if not reply and "Skipped" not in str(ai_err):
+                                    if debug:
+                                        console.print(f"[dim debug]AI call failed ({ai_err}), retrying once...[/dim debug]")
+                                    reply, ai_err = provider.explain(items)
+                        except KeyboardInterrupt:
+                            ai_err = "Skipped by user"
+                            console.print("\n[yellow]AI explanation skipped.[/yellow]")
+                            
+                        if debug:
+                            elapsed = time.time() - start_time
+                            console.print(f"[dim debug]AI call took {elapsed:.2f} seconds[/dim debug]")
 
-            choice = Prompt.ask("Action", choices=["apply", "discard", "edit again"], default="apply")
+                        if reply:
+                            overall_summary = reply.overall
+                            meaning_map = {eff.id: eff.meaning for eff in reply.effects}
+                            fix_map = {eff.id: eff.fix for eff in reply.effects}
+                            for ch in changes:
+                                ch_id = f"{ch.category}:{ch.item_id}"
+                                if ch_id in meaning_map:
+                                    meaning = meaning_map[ch_id]
+                                    if _is_contradiction(meaning, ch.findings):
+                                        pass
+                                    else:
+                                        ch.meaning = meaning
+                                        ch.fix = fix_map.get(ch_id)
+
+                render_effect_view(changes, overall_summary)
+                if ai_err:
+                    console.print(f"[dim]AI explanation unavailable ({ai_err}). Showing verified checks only.[/dim]\n")
+
+            import termios
+            import sys
+            if sys.stdin.isatty():
+                try:
+                    termios.tcflush(sys.stdin, termios.TCIFLUSH)
+                except Exception:
+                    pass
+
+            while True:
+                choice = Prompt.ask("Action", choices=["apply", "a", "discard", "d", "edit again", "e"])
+                if choice in ["a", "apply"]:
+                    choice = "apply"
+                elif choice in ["d", "discard"]:
+                    choice = "discard"
+                elif choice in ["e", "edit again"]:
+                    choice = "edit again"
+                break
+                
             if choice == "discard":
                 console.print("Changes discarded.")
                 return
@@ -147,20 +214,65 @@ def handle_edit(target_path: str, show_diff: bool = False, debug: bool = False):
 
 def handle_undo(target_path: str):
     path = Path(target_path)
+    if path.name.endswith(".bak"):
+        console.print("[red]pass the original file path[/red]")
+        sys.exit(1)
+        
     if not path.exists():
         console.print(f"[red]Error: File {path} does not exist.[/red]")
         sys.exit(1)
         
     backups = sorted(path.parent.glob(f"{path.name}.*.bak"))
     if not backups:
-        console.print(f"[red]No backups found for {path}[/red]")
+        console.print("[red]nothing left to undo[/red]")
         sys.exit(1)
 
     latest_backup = backups[-1]
-    console.print(f"Restoring from {latest_backup}")
+    console.print(f"Restoring from {latest_backup.name}")
 
-    # Optionally backup the current state before undoing
-    backup_file(path)
+    # Backup the current state before undoing using .pre-undo suffix
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    pre_undo_path = path.with_name(f"{path.name}.{timestamp}.pre-undo")
+    shutil.copy2(path, pre_undo_path)
     
     shutil.copy2(latest_backup, path)
+    
+    # Mark the used backup as .restored
+    restored_path = latest_backup.with_suffix(".restored")
+    latest_backup.rename(restored_path)
+    
     console.print("[green]Undo successful. Previous state restored.[/green]")
+
+
+def handle_doctor(test_ai: bool = False):
+    """Check system dependencies and configuration."""
+    console.print("[bold cyan]=== EIDOLON DOCTOR ===[/bold cyan]\n")
+    
+    # 1. Nano
+    nano_path = shutil.which("nano")
+    if nano_path:
+        console.print(f"[green]✓[/green] nano installed ({nano_path})")
+    else:
+        console.print("[red]✗[/red] nano not found in PATH")
+        
+    # 2. Hyprctl
+    hyprctl_path = shutil.which("hyprctl")
+    if hyprctl_path:
+        console.print(f"[green]✓[/green] hyprctl installed ({hyprctl_path})")
+    else:
+        console.print("[yellow]![/yellow] hyprctl not found (monitor checks will fall back to UNKNOWN)")
+        
+    # 3. AI Config
+    from eidolon.ai import GemmaProvider
+    provider = GemmaProvider()
+    if provider.is_configured:
+        console.print(f"[green]✓[/green] Gemma API key configured (model: {provider.model_name})")
+        if test_ai:
+            with console.status("[dim]Testing AI connection...[/dim]"):
+                ok, msg = provider.test_connection()
+            if ok:
+                console.print(f"  [green]✓ Test call successful:[/green] {msg}")
+            else:
+                console.print(f"  [red]✗ Test call failed:[/red] {msg}")
+    else:
+        console.print("[yellow]![/yellow] Gemma API key not configured. AI predictions will be disabled.")
