@@ -58,15 +58,39 @@ def parse_config(content: str) -> HyprlandConfig:
         # parse bind
         elif expanded.startswith("bind"):
             m = re.match(r'^(bind[a-z]*)\s*=\s*(.*)$', expanded)
+            parsed_bind = False
             if m:
                 variant = m.group(1)
                 args_str = m.group(2)
-                parts = [p.strip() for p in args_str.split(',', 3)]
-                if len(parts) == 4:
-                    config.binds.append(BindDirective(
-                        raw_line=line, line_number=line_num,
-                        variant=variant, mods=parts[0], key=parts[1], dispatcher=parts[2], arg=parts[3]
-                    ))
+                # Split by comma
+                parts = [p.strip() for p in args_str.split(',')]
+                
+                # Check for valid modifier and known dispatcher
+                # Hyprland binds have at least 3 parts: mod, key, dispatcher
+                if len(parts) >= 3:
+                    mods = parts[0]
+                    key = parts[1]
+                    dispatcher = parts[2]
+                    arg = ",".join(parts[3:]) if len(parts) > 3 else ""
+                    
+                    # Basic validation for "valid modifier field" and "known dispatcher"
+                    # User said "does not have a valid modifier field and a known dispatcher"
+                    # We can check if mods is well-formed (e.g. no '+', space)
+                    # and dispatcher is known.
+                    known_dispatchers = {"exec", "execr", "killactive", "workspace", "movetoworkspace", "togglefloating", "fullscreen", "pseudo", "pin", "exit"}
+                    # The user specifically complained about "Super+T" (which uses + instead of , or is invalid in Hyprland)
+                    if "+" not in mods and dispatcher in known_dispatchers:
+                        config.binds.append(BindDirective(
+                            raw_line=line, line_number=line_num,
+                            variant=variant, mods=mods, key=key, dispatcher=dispatcher, arg=arg
+                        ))
+                        parsed_bind = True
+                        
+            if not parsed_bind:
+                config.unknowns.append(UnknownDirective(
+                    raw_line=line, line_number=line_num,
+                    content=expanded
+                ))
         
         # parse exec / exec-once
         elif expanded.startswith("exec-once") and "=" in expanded:
