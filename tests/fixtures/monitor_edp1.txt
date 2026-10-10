@@ -1,0 +1,11 @@
+Monitor eDP-1 (ID 0):
+	1920x1200@60.00300 at 0x0
+	description: Samsung Display Corp. 0x4208
+	make: Samsung Display Corp.
+	model: 0x4208
+	physical size (mm): 300x190
+	active workspace: 3 (3)
+	scale: 1.2
+	focused: yes
+	disabled: false
+	availableModes: 1920x1200@60.00Hz 

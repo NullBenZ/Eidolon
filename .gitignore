@@ -1,0 +1,8 @@
+#Build private stuff
+.venv/
+__pycache__/
+*.pyc
+.env
+*.bak
+.pytest_cache/
+*.egg-info/
