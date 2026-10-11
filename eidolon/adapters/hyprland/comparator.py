@@ -110,5 +110,9 @@ def compare_configs(old_c: HyprlandConfig, new_c: HyprlandConfig, new_findings: 
             if not f:
                 f = [Finding(rule_id="HYP-000", title="Unknown Directive", label=Label.UNKNOWN, severity=Severity.INFO, evidence=f"line {unk.line_number} not understood", recommendation="", source="Hyprland Adapter", line_number=unk.line_number)]
             changes.append(ConfigChange("Unknown", "Directive", None, unk.content, f))
+            
+    for unk in old_c.unknowns:
+        if not any(u.content == unk.content for u in new_c.unknowns):
+            changes.append(ConfigChange("Unknown", "Directive", unk.content, None, []))
 
     return changes
