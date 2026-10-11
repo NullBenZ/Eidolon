@@ -29,7 +29,27 @@ Every finding has one of three labels:
 
 ### Where AI fits
 
-Code finds the facts. **Gemma** (via the Gemini API) only explains them in plain English and suggests a fix. It never decides what is true. If the AI fails, times out, or you pass `--no-ai`, you still get the full verified report.
+Code finds the facts. **Gemma** (via the Gemini API) explains them in plain English and suggests a fix. It never decides what is true. If the AI fails, times out, or you pass `--no-ai`, you still get the full verified report.
+
+### Suggest mode (experimental)
+
+```bash
+eidolon suggest ~/.config/hypr/monitors.conf "set my screen to 1920x1200 at 60Hz with scale 1"
+```
+
+**Gemma proposes, code verifies, you approve.**
+
+1. Gemma proposes config lines from your plain-English request.
+2. Each line passes a safety filter first: it must be a single `monitor` line, with no shell chaining.
+3. The lines go into the temp copy only, then run through the same checks as a manual edit.
+4. The change is labeled **AI-suggested**. An AI suggestion is never VERIFIED. Only code checks produce VERIFIED.
+5. You choose apply, discard, or edit again.
+
+Gemma can suggest wrong values. The checks catch what they know about (for example, an unsupported monitor mode), so read every suggestion before you apply it. Currently limited to Hyprland monitor lines. Anything else prints "not supported yet" and changes nothing.
+
+### Layout preview
+
+For monitor changes, Eidolon draws a schematic BEFORE / AFTER layout in the terminal. It is **not a screenshot**. Box sizes come from resolution divided by scale, and the layout is labeled LIKELY. If the new mode isn't available on your screen, the AFTER box turns red, and that part is VERIFIED.
 
 ## Safety
 
@@ -69,10 +89,11 @@ eidolon doctor --test-ai
 ## Usage
 
 ```bash
-eidolon edit ~/.config/hypr/hyprland.conf     # edit with checks
-eidolon edit PATH --no-ai                      # fully offline, verified checks only
-eidolon edit PATH --show-diff                  # also show the raw line diff
-eidolon undo PATH                              # restore the most recent unused backup
+eidolon edit ~/.config/hypr/hyprland.conf      # edit with checks
+eidolon edit PATH --no-ai                       # fully offline, verified checks only
+eidolon edit PATH --show-diff                   # also show the raw line diff
+eidolon suggest PATH "plain-English request"    # AI proposes, code verifies (experimental)
+eidolon undo PATH                               # restore the most recent unused backup
 ```
 
 ## What the Hyprland adapter checks
@@ -82,7 +103,7 @@ eidolon undo PATH                              # restore the most recent unused 
 - Commands in `exec` and `exec-once` lines exist in your PATH
 - `source = ...` paths exist
 - `$variables` expand correctly
-- Lines it does not understand are reported as UNKNOWN, never silently dropped
+- Lines it does not understand are reported as UNKNOWN or shown as a raw diff, never silently dropped as safe
 
 ## Status
 
@@ -90,25 +111,31 @@ eidolon undo PATH                              # restore the most recent unused 
 - Safe edit flow: temp copy, hash check, apply, discard, and backup
 - Apply never happens on a bare Enter
 - Undo of the latest change
-- Hyprland checks listed above
+- Monitor mode, duplicate bind, and command-in-PATH checks
+- Checks work in separately sourced keybind files (valid syntax)
+- Schematic layout preview for monitor changes
 - Gemma explanations, with fallback to verified-only output
+- `eidolon suggest` for monitor lines: valid proposals, unsupported-mode flagging, and out-of-scope requests
 
 **In progress or not fully verified:**
 - Undo across several applies (covered by automated tests; manual testing still ongoing)
-- Keybinds defined in separately sourced files
+- Malformed bind lines in sourced files (for example `Super+T` instead of `SUPER, T`) fall back to a raw diff and are not yet reported as UNKNOWN
 - Duplicate-bind cards are not grouped into one card in every case
 - The Gemma call sometimes times out on the free tier. The tool falls back to verified-only output.
+- Layout preview boxes can get tall on small terminals
+- `suggest` supports monitor lines only
 - No check yet for removing your last terminal-launching keybind
 
 ## Limits
 
-Eidolon lowers risk. It does not guarantee a config is safe. The parser understands only part of Hyprland's syntax, and anything else is reported as UNKNOWN. It will never turn a finding it cannot prove into a VERIFIED one.
+Eidolon lowers risk. It does not guarantee a config is safe. The parser understands only part of Hyprland's syntax, and anything else is reported as UNKNOWN or shown as a raw diff. It will never turn a finding it cannot prove into a VERIFIED one. It has only been tested on Arch Linux with Hyprland.
 
 ## Roadmap
 
 - Local model support (Ollama), so configs never leave your machine
+- `suggest` for keybinds and startup commands
 - More adapters: SSH, systemd, Git
-- A schematic layout preview for monitor changes
+- A check for removing your last terminal-launching keybind
 
 ## Contributing
 
