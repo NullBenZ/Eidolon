@@ -6,6 +6,7 @@ import tempfile
 import hashlib
 from datetime import datetime
 from pathlib import Path
+from typing import List, Tuple
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from .diff import compute_diff
@@ -276,3 +277,236 @@ def handle_doctor(test_ai: bool = False):
                 console.print(f"  [red]✗ Test call failed:[/red] {msg}")
     else:
         console.print("[yellow]![/yellow] Gemma API key not configured. AI predictions will be disabled.")
+
+
+# ---------------------------------------------------------------------------
+# Safety filter for AI-suggested lines
+# ---------------------------------------------------------------------------
+
+_SHELL_CHAIN_CHARS = {";", "&&", "||", "|"}
+
+def _filter_suggested_lines(lines: List[str]) -> Tuple[List[str], List[str]]:
+    """
+    Validate AI-suggested lines. Returns (accepted, rejected_reasons).
+    Only monitor lines are in scope.
+    """
+    accepted = []
+    rejected = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            rejected.append(f"Empty line rejected")
+            continue
+        if "\n" in stripped:
+            rejected.append(f"Rejected (multi-statement): {stripped[:60]}")
+            continue
+        if not stripped.startswith("monitor"):
+            rejected.append(f"Rejected (not a monitor line): {stripped[:60]}")
+            continue
+        # Check for shell chaining characters anywhere in the line
+        for ch in _SHELL_CHAIN_CHARS:
+            if ch in stripped:
+                rejected.append(f"Rejected (shell chaining '{ch}'): {stripped[:60]}")
+                break
+        else:
+            accepted.append(stripped)
+    return accepted, rejected
+
+
+def _apply_suggestion_to_content(original_content: str, accepted_lines: List[str]) -> str:
+    """
+    Apply accepted monitor lines to file content.
+    If a line for the same monitor name exists, replace it. Otherwise append.
+    """
+    import re
+    result_lines = original_content.splitlines()
+    used = set()
+
+    for new_line in accepted_lines:
+        # Extract monitor name from the suggested line
+        m = re.match(r'^monitor\s*=\s*([^,]+)', new_line)
+        if not m:
+            result_lines.append(new_line)
+            continue
+        mon_name = m.group(1).strip()
+
+        replaced = False
+        for i, existing in enumerate(result_lines):
+            existing_stripped = existing.strip()
+            em = re.match(r'^monitor\s*=\s*([^,]+)', existing_stripped)
+            if em and em.group(1).strip() == mon_name and i not in used:
+                result_lines[i] = new_line
+                used.add(i)
+                replaced = True
+                break
+        if not replaced:
+            result_lines.append(new_line)
+
+    return "\n".join(result_lines)
+
+
+def handle_suggest(target_path: str, request: str, no_ai: bool = False, debug: bool = False):
+    """Handle the 'eidolon suggest' command."""
+    if no_ai:
+        console.print("[yellow]The suggest command needs AI. Use without --no-ai.[/yellow]")
+        return
+
+    path = Path(target_path)
+    if not path.exists():
+        console.print(f"[red]Error: File {path} does not exist.[/red]")
+        sys.exit(1)
+
+    path = resolve_target(path)
+    check_writable(path)
+
+    original_hash = get_file_hash(path)
+    original_content = path.read_text()
+
+    # Scope guard: only monitor requests are supported
+    monitor_keywords = ["monitor", "resolution", "display", "screen", "scale", "refresh", "hz"]
+    if not any(kw in request.lower() for kw in monitor_keywords):
+        console.print("[yellow]Not supported yet.[/yellow] The suggest command currently handles monitor changes only.")
+        return
+
+    # Extract relevant context lines (existing monitor lines)
+    from eidolon.adapters.hyprland import parse_config
+    old_config = parse_config(original_content)
+    context_lines = [m.raw_line for m in old_config.monitors]
+    if not context_lines:
+        # No existing monitors — give all lines as context so AI knows the file
+        context_lines = [l for l in original_content.splitlines() if l.strip() and not l.strip().startswith("#")]
+
+    # --- AI call ---
+    from eidolon.ai import GemmaProvider, SuggestionReply
+    provider = GemmaProvider()
+    if not provider.is_configured:
+        console.print("[red]AI unavailable: API key not configured. Cannot run suggest.[/red]")
+        return
+
+    import time
+    start_time = time.time()
+    reply = None
+    ai_err = None
+
+    try:
+        with console.status("[dim]Asking Gemma for suggestions... (Ctrl+C to skip)[/dim]"):
+            reply, ai_err = provider.suggest(request, context_lines)
+            if not reply and ai_err and "Skipped" not in ai_err:
+                if debug:
+                    console.print(f"[dim debug]AI call failed ({ai_err}), retrying once...[/dim debug]")
+                reply, ai_err = provider.suggest(request, context_lines)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]AI suggestion skipped.[/yellow]")
+        return
+
+    if debug:
+        elapsed = time.time() - start_time
+        console.print(f"[dim debug]AI call took {elapsed:.2f} seconds[/dim debug]")
+
+    if not reply:
+        console.print(f"[red]AI failed: {ai_err}. No changes made.[/red]")
+        return
+
+    if not reply.lines:
+        console.print(f"[yellow]AI returned no suggestions.[/yellow]")
+        if reply.explanation:
+            console.print(f"Reason: {reply.explanation}")
+        return
+
+    if reply.explanation:
+        console.print(f"\n[bold]AI explanation:[/bold] {reply.explanation}\n")
+
+    # --- Safety filter ---
+    accepted, rejected = _filter_suggested_lines(reply.lines)
+    if rejected:
+        for r in rejected:
+            console.print(f"[red]⚠ {r}[/red]")
+    if not accepted:
+        console.print("[red]All suggested lines were rejected by the safety filter. No changes made.[/red]")
+        return
+
+    console.print(f"[green]Accepted {len(accepted)} suggested line(s).[/green]")
+    for line in accepted:
+        console.print(f"  [dim]→[/dim] {line}")
+    console.print()
+
+    # --- Apply to temp copy and run checks ---
+    with tempfile.TemporaryDirectory() as tempdir:
+        temp_path = Path(tempdir) / path.name
+        edited_content = _apply_suggestion_to_content(original_content, accepted)
+        temp_path.write_text(edited_content)
+
+        diff_text = compute_diff(original_content, edited_content, fromfile=str(path), tofile="AI-suggested")
+
+        from eidolon.adapters.hyprland import parse_config, parse_hyprctl_monitors, run_checks
+        from eidolon.adapters.hyprland.comparator import compare_configs
+        from eidolon.report import render_effect_view
+
+        new_config = parse_config(edited_content)
+
+        monitors_info = None
+        try:
+            result = subprocess.run(["hyprctl", "monitors"], capture_output=True, text=True)
+            if result.returncode == 0:
+                monitors_info = parse_hyprctl_monitors(result.stdout)
+        except FileNotFoundError:
+            if debug:
+                console.print("[dim debug]hyprctl not found.[/dim debug]")
+
+        new_findings = run_checks(new_config, path.parent, monitors_info)
+        changes = compare_configs(old_config, new_config, new_findings)
+
+        if not changes:
+            console.print("[green]No semantic changes detected.[/green]")
+            return
+
+        # Label all changes as AI-suggested
+        for ch in changes:
+            ch.meaning = f"[AI-suggested] {ch.meaning}" if ch.meaning else "[AI-suggested]"
+
+        render_effect_view(changes)
+        console.print("[dim italic]Note: AI suggestions are never VERIFIED. Only code checks produce VERIFIED status.[/dim italic]\n")
+
+        # --- Prompt (no default, stdin flush) ---
+        import termios
+        if sys.stdin.isatty():
+            try:
+                termios.tcflush(sys.stdin, termios.TCIFLUSH)
+            except Exception:
+                pass
+
+        while True:
+            choice = Prompt.ask("Action", choices=["apply", "a", "discard", "d", "edit again", "e"])
+            if choice in ["a", "apply"]:
+                choice = "apply"
+            elif choice in ["d", "discard"]:
+                choice = "discard"
+            elif choice in ["e", "edit again"]:
+                choice = "edit again"
+            break
+
+        if choice == "discard":
+            console.print("Changes discarded.")
+            return
+        elif choice == "edit again":
+            # Hand off to the normal edit flow with the suggested content as starting point
+            shutil.copy2(temp_path, Path(tempdir) / "edit_copy")
+            edit_copy = Path(tempdir) / "edit_copy"
+            shutil.copy2(temp_path, edit_copy)
+            console.print("[dim]Opening editor with the AI suggestion applied...[/dim]")
+            handle_edit(str(path), debug=debug)
+            return
+        elif choice == "apply":
+            current_hash = get_file_hash(path)
+            if current_hash != original_hash:
+                console.print("[red]Conflict: The original file has changed since the session began![/red]")
+                console.print("Aborting to prevent overwriting someone else's changes.")
+                sys.exit(1)
+
+            backup_path = backup_file(path)
+            if backup_path:
+                console.print(f"Backup saved to: {backup_path}")
+
+            shutil.copy2(temp_path, path)
+            console.print("[green]AI suggestion applied successfully.[/green]")
+            return

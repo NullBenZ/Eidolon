@@ -27,6 +27,13 @@ def main():
     parser_doctor = subparsers.add_parser("doctor", help="Check system dependencies and configuration")
     parser_doctor.add_argument("--test-ai", action="store_true", help="Perform a test call to the AI")
 
+    # suggest command
+    parser_suggest = subparsers.add_parser("suggest", help="Ask AI to suggest config changes in plain English")
+    parser_suggest.add_argument("path", help="Path to the config file")
+    parser_suggest.add_argument("request", help="What you want to change, in plain English")
+    parser_suggest.add_argument("--no-ai", action="store_true", help="Refuse politely (suggest needs AI)")
+    parser_suggest.add_argument("--debug", action="store_true", help="Show debug information")
+
     args = parser.parse_args()
 
     if args.command == "edit":
@@ -40,6 +47,9 @@ def main():
     elif args.command == "doctor":
         from eidolon.core import handle_doctor
         handle_doctor(test_ai=args.test_ai)
+    elif args.command == "suggest":
+        from eidolon.core import handle_suggest
+        handle_suggest(args.path, args.request, no_ai=args.no_ai, debug=args.debug)
     else:
         parser.print_help()
         sys.exit(1)
