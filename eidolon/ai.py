@@ -19,9 +19,7 @@ from typing import List, Optional, Tuple, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 
 
-# ---------------------------------------------------------------------------
 # Tiny .env loader (no extra dependency)
-# ---------------------------------------------------------------------------
 
 def load_dotenv(start_dir: Optional[Path] = None):
     """
@@ -47,9 +45,7 @@ def load_dotenv(start_dir: Optional[Path] = None):
             os.environ.setdefault(key, value)
 
 
-# ---------------------------------------------------------------------------
 # Pydantic models for the AI reply
-# ---------------------------------------------------------------------------
 
 class EffectItem(BaseModel):
     """One AI explanation for one finding."""
@@ -77,9 +73,8 @@ class SuggestionReply(BaseModel):
     explanation: str = Field(default="", max_length=500)
 
 
-# ---------------------------------------------------------------------------
+
 # System prompts
-# ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
 You are a Linux desktop configuration analyst. You will receive a JSON list of
@@ -133,10 +128,7 @@ def _is_contradiction(meaning: str, findings: List[Any]) -> bool:
             return True
     return False
 
-
-# ---------------------------------------------------------------------------
 # Base class
-# ---------------------------------------------------------------------------
 
 class AIProvider(ABC):
     """Base class for AI backends."""
@@ -163,9 +155,7 @@ class AIProvider(ABC):
         ...
 
 
-# ---------------------------------------------------------------------------
 # Gemma provider (google-genai SDK)
-# ---------------------------------------------------------------------------
 
 class GemmaProvider(AIProvider):
     """Talks to Gemini API via google-genai."""
@@ -329,9 +319,7 @@ class GemmaProvider(AIProvider):
         return reply, None
 
 
-# ---------------------------------------------------------------------------
 # Helper: build the items list from ConfigChanges
-# ---------------------------------------------------------------------------
 
 def changes_to_ai_items(changes) -> List[Dict[str, Any]]:
     """Convert a list of ConfigChange objects to the compact dicts we send to AI."""
