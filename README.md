@@ -29,7 +29,7 @@ Every finding has one of three labels:
 
 ### Where AI fits
 
-Code finds the facts. **Gemma** (via the Gemini API) explains them in plain English and suggests a fix. It never decides what is true. If the AI fails, times out, or you pass `--no-ai`, you still get the full verified report.
+Code finds the facts. **Gemma** (via the Gemini API) explains them in plain English and suggests a fix. The status of each finding always comes from code, never from the model, and a basic guard drops an AI explanation that contradicts a verified error. If the AI fails, times out, or you pass `--no-ai`, you still get the full verified report.
 
 ### Suggest mode (experimental)
 
@@ -56,13 +56,14 @@ For monitor changes, Eidolon draws a schematic BEFORE / AFTER layout in the term
 - Edits happen on a temp copy, never the real file.
 - Before applying, Eidolon checks a SHA-256 hash of the original. If something else changed the file, it refuses to apply.
 - Every apply makes a timestamped `.bak` backup.
-- `eidolon undo PATH` restores from backups.
+- `eidolon undo PATH` restores from backups, newest first. Each backup is used once.
 - `nano` is launched without a shell. Config contents are never executed.
 - No sudo is used.
+- The API key is read from `.env` (which is git-ignored) and is never printed in error messages.
 
 ## Install
 
-Requires Python 3 (developed on 3.14) and `nano`. The Hyprland checks use `hyprctl`.
+Requires Python 3.10 or newer (developed on 3.14) and `nano`. The Hyprland checks use `hyprctl`.
 
 ```bash
 git clone https://github.com/NullBenZ/Eidolon.git
@@ -94,13 +95,14 @@ eidolon edit PATH --no-ai                       # fully offline, verified checks
 eidolon edit PATH --show-diff                   # also show the raw line diff
 eidolon suggest PATH "plain-English request"    # AI proposes, code verifies (experimental)
 eidolon undo PATH                               # restore the most recent unused backup
+eidolon doctor [--test-ai]                      # check dependencies and AI setup
 ```
 
 ## What the Hyprland adapter checks
 
 - Monitor mode vs the modes `hyprctl monitors` reports for your screen
 - Duplicate keybinds across the whole file
-- Commands in `exec` and `exec-once` lines exist in your PATH
+- Commands in `exec`, `exec-once` and `bind ... exec` lines exist in your PATH
 - `source = ...` paths exist
 - `$variables` expand correctly
 - Lines it does not understand are reported as UNKNOWN or shown as a raw diff, never silently dropped as safe
@@ -110,7 +112,7 @@ eidolon undo PATH                               # restore the most recent unused
 **Working and tested by hand:**
 - Safe edit flow: temp copy, hash check, apply, discard, and backup
 - Apply never happens on a bare Enter
-- Undo of the latest change
+- Undo of the latest change, including after `suggest`
 - Monitor mode, duplicate bind, and command-in-PATH checks
 - Checks work in separately sourced keybind files (valid syntax)
 - Schematic layout preview for monitor changes
@@ -120,15 +122,26 @@ eidolon undo PATH                               # restore the most recent unused
 **In progress or not fully verified:**
 - Undo across several applies (covered by automated tests; manual testing still ongoing)
 - Malformed bind lines in sourced files (for example `Super+T` instead of `SUPER, T`) fall back to a raw diff and are not yet reported as UNKNOWN
+- Exec lines with a `[rule]` prefix or `VAR=value` prefix may be misreported
+- Hyprland submaps are not specially handled (untested)
 - Duplicate-bind cards are not grouped into one card in every case
 - The Gemma call sometimes times out on the free tier. The tool falls back to verified-only output.
 - Layout preview boxes can get tall on small terminals
-- `suggest` supports monitor lines only
+- `suggest` supports monitor lines only, and "edit again" inside `suggest` reopens the original file, not the AI's proposal
 - No check yet for removing your last terminal-launching keybind
 
 ## Limits
 
 Eidolon lowers risk. It does not guarantee a config is safe. The parser understands only part of Hyprland's syntax, and anything else is reported as UNKNOWN or shown as a raw diff. It will never turn a finding it cannot prove into a VERIFIED one. It has only been tested on Arch Linux with Hyprland.
+
+**Privacy:** AI explanations send the changed settings and check results to the Gemini API. `suggest` sends your request plus your existing monitor lines (or the file's non-comment lines if there are none). `--no-ai` sends nothing.
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
 
 ## Roadmap
 
